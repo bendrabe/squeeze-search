@@ -176,6 +176,16 @@ class Experiment:
         #hooks = [tf_debug.LocalCLIDebugHook()]
         #hooks = [tf.train.ProfilerHook(save_steps=1000)]
 
-        for _ in range(self.num_epochs):
+        max_val = 0.0
+        max_epoch = 0
+
+        for epoch in range(self.num_epochs):
             classifier.train(input_fn=train_input_fn, steps=self.steps_per_epoch, hooks=hooks)
-            classifier.evaluate(input_fn=eval_input_fn)
+            eval_results = classifier.evaluate(input_fn=eval_input_fn)
+            val = eval_results['accuracy']
+            if val > max_val:
+                max_val = val
+                max_epoch = epoch
+            # if peak performance was more than 5 epochs ago, quit
+            if epoch - max_epoch > 5:
+                break
