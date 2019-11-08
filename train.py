@@ -16,8 +16,7 @@ MOMENTUM=0.9
 def model_fn(features, labels, mode, params):
     tf.summary.image("inputs", tf.transpose(features, [0,2,3,1]), max_outputs=6)
     lr0 = params['lr0']
-    decay_steps = params['decay_steps']
-    lr_decay_power = params['lr_decay_power']
+    lr_decay_rate = params['lr_decay_rate']
     weight_decay = params['weight_decay']
     data_format = params['data_format']
     is_training = mode == tf.estimator.ModeKeys.TRAIN
@@ -48,12 +47,11 @@ def model_fn(features, labels, mode, params):
 
     if mode == tf.estimator.ModeKeys.TRAIN:
         global_step = tf.train.get_or_create_global_step()
-        learning_rate = tf.train.polynomial_decay(
+        learning_rate = tf.train.natural_exp_decay(
             learning_rate=lr0,
             global_step=global_step,
-            decay_steps=decay_steps,
-            end_learning_rate=0.0,
-            power=lr_decay_power
+            decay_steps=1,
+            decay_rate=lr_decay_rate
         )
         tf.identity(learning_rate, 'learning_rate')
         tf.summary.scalar('learning_rate', learning_rate)
@@ -100,27 +98,26 @@ class Experiment:
                  model_dir='summary',
                  global_batch_size=512,
                  lr0=0.04,
-                 weight_decay=0.0002,
-                 lr_decay_power=1.0):
+                 lr_decay_rate=3.1e-5,
+                 weight_decay=0.0002):
         self.num_gpus = num_gpus
         self.num_epochs = num_epochs
         self.data_dir = data_dir
         self.model_dir = model_dir
         self.global_batch_size = global_batch_size
         self.lr0 = lr0
-        self.lr_decay_power = lr_decay_power
+        self.lr_decay_rate = lr_decay_rate
         self.weight_decay = weight_decay
 
         # TODO: error handling, make sure gbs is multiple of num_gpus
         self.local_batch_size = global_batch_size // num_gpus
         self.steps_per_epoch = ((_NUM_TRAIN_IMAGES - 1 ) // global_batch_size) + 1
-        self.decay_steps = num_epochs*self.steps_per_epoch
         self.input_shape = (_DEFAULT_IMAGE_SIZE, _DEFAULT_IMAGE_SIZE, _NUM_CHANNELS)
 
         self.hyperparams = {
             'global_batch_size': self.global_batch_size,
             'lr0': self.lr0,
-            'lr_decay_power': self.lr_decay_power,
+            'lr_decay_rate': self.lr_decay_rate,
             'weight_decay': self.weight_decay
         }
 
@@ -162,8 +159,7 @@ class Experiment:
         classifier = tf.estimator.Estimator(model_fn=model_fn, model_dir=self.model_dir,
             config=config, params={
                 'lr0': self.lr0,
-                'decay_steps': self.decay_steps,
-                'lr_decay_power': self.lr_decay_power,
+                'lr_decay_rate': self.lr_decay_rate,
                 'weight_decay': self.weight_decay,
                 'data_format': DATA_FORMAT
             })
