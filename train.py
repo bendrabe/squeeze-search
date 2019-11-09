@@ -153,6 +153,8 @@ class Experiment:
         config = tf.estimator.RunConfig(
             session_config=session_config,
             save_checkpoints_steps=self.steps_per_epoch,
+            keep_checkpoint_max=1,
+            save_summary_steps=500,
             train_distribute=tf.contrib.distribute.MirroredStrategy(num_gpus=self.num_gpus)
         )
 
@@ -168,7 +170,7 @@ class Experiment:
                                                 'cross_entropy',
                                                 'train_accuracy'])
 
-        hooks = [tf.train.LoggingTensorHook(_TENSORS_TO_LOG, every_n_iter=100)]
+        hooks = [tf.train.LoggingTensorHook(_TENSORS_TO_LOG, every_n_iter=500)]
         #hooks = [tf_debug.LocalCLIDebugHook()]
         #hooks = [tf.train.ProfilerHook(save_steps=1000)]
 
@@ -182,6 +184,9 @@ class Experiment:
             if val > max_val:
                 max_val = val
                 max_epoch = epoch
+            # if at least 2 epochs have trained and acc still not responding, quit
+            if epoch >= 1 and val < 0.01:
+                break
             # if peak performance was more than 5 epochs ago, quit
-            if epoch - max_epoch > 5:
+            if epoch - max_epoch >= 5:
                 break

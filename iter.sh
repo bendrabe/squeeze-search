@@ -1,6 +1,6 @@
 #!/bin/bash
 
-for i in {0..8}
+for i in {0..32}
 do
     python main.py
 done
