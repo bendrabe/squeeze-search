@@ -93,7 +93,7 @@ def model_fn(features, labels, mode, params):
 class Experiment:
     def __init__(self,
                  num_gpus=4,
-                 num_epochs=68,
+                 num_epochs=70,
                  data_dir='/data/imagenet-tfrecord/',
                  model_dir='summary',
                  global_batch_size=512,
