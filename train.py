@@ -1,5 +1,6 @@
 import argparse
 import json
+import numpy as np
 import tensorflow as tf
 #from tensorflow.python import debug as tf_debug
 
@@ -17,6 +18,7 @@ def model_fn(features, labels, mode, params):
     tf.summary.image("inputs", tf.transpose(features, [0,2,3,1]), max_outputs=6)
     lr0 = params['lr0']
     lr_decay_rate = params['lr_decay_rate']
+    warmup_steps = params['warmup_steps']
     weight_decay = params['weight_decay']
     data_format = params['data_format']
     is_training = mode == tf.estimator.ModeKeys.TRAIN
@@ -47,12 +49,18 @@ def model_fn(features, labels, mode, params):
 
     if mode == tf.estimator.ModeKeys.TRAIN:
         global_step = tf.train.get_or_create_global_step()
-        learning_rate = tf.train.natural_exp_decay(
+
+        lr = tf.train.natural_exp_decay(
             learning_rate=lr0,
             global_step=global_step,
             decay_steps=1,
             decay_rate=lr_decay_rate
         )
+        post_warmup_lr = lr0 * np.exp(-1 * lr_decay_rate * warmup_steps)
+        warmup_lr = (post_warmup_lr * 
+            tf.cast(global_step, tf.float64) / tf.cast(warmup_steps, tf.float64))
+        learning_rate = tf.cond(global_step < warmup_steps, lambda: warmup_lr, lambda: lr)
+
         tf.identity(learning_rate, 'learning_rate')
         tf.summary.scalar('learning_rate', learning_rate)
         optimizer = tf.train.MomentumOptimizer(
@@ -99,6 +107,7 @@ class Experiment:
                  global_batch_size=512,
                  lr0=0.04,
                  lr_decay_rate=3.1e-5,
+                 warmup_epochs=0,
                  weight_decay=0.0002):
         self.num_gpus = num_gpus
         self.num_epochs = num_epochs
@@ -107,17 +116,20 @@ class Experiment:
         self.global_batch_size = global_batch_size
         self.lr0 = lr0
         self.lr_decay_rate = lr_decay_rate
+        self.warmup_epochs = warmup_epochs
         self.weight_decay = weight_decay
 
         # TODO: error handling, make sure gbs is multiple of num_gpus
         self.local_batch_size = global_batch_size // num_gpus
         self.steps_per_epoch = ((_NUM_TRAIN_IMAGES - 1 ) // global_batch_size) + 1
         self.input_shape = (_DEFAULT_IMAGE_SIZE, _DEFAULT_IMAGE_SIZE, _NUM_CHANNELS)
+        self.warmup_steps = int(self.steps_per_epoch * self.warmup_epochs)
 
         self.hyperparams = {
             'global_batch_size': self.global_batch_size,
             'lr0': self.lr0,
             'lr_decay_rate': self.lr_decay_rate,
+            'warmup_epochs': self.warmup_epochs,
             'weight_decay': self.weight_decay
         }
 
@@ -163,6 +175,7 @@ class Experiment:
                 'lr0': self.lr0,
                 'lr_decay_rate': self.lr_decay_rate,
                 'weight_decay': self.weight_decay,
+                'warmup_steps': self.warmup_steps,
                 'data_format': DATA_FORMAT
             })
 
