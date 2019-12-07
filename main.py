@@ -10,19 +10,19 @@ NUM_EPOCHS = 70
 LATE_LR_EPOCH = 4*NUM_EPOCHS//5
 WEIGHT_DECAY = 0.0004
 
-lr0_mult = 8
+lr0_mult = 6
 lr0_space_min = 0.04
-lr0_space_max = 0.8
+lr0_space_max = 0.4
 lrf_space_min = lr0_space_min / 100
 lrf_space_max = lr0_space_max / 100
 lr0_space = list(np.geomspace(lr0_space_min, lr0_space_max, lr0_mult))
-lrf_space = list(np.arange(lrf_space_min, lrf_space_max, 0.001))
+lrf_space = list(np.arange(lrf_space_min, lrf_space_max, 0.0008))
 wepochs_space = [5, 10]
 
 combined_space = [(i,j,k)
-                  for i in lr0_space
+                  for k in wepochs_space
                   for j in lrf_space
-                  for k in wepochs_space]
+                  for i in lr0_space]
 
 model_dir_base = 'trials/'
 if not os.path.exists(model_dir_base):

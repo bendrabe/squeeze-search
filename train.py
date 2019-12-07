@@ -197,8 +197,8 @@ class Experiment:
             if val > max_val:
                 max_val = val
                 max_epoch = epoch
-            # if at least 2 epochs have trained and acc still not responding, quit
-            if epoch >= 1 and val < 0.01:
+            # if acc still not responding after warmup, quit
+            if epoch >= self.warmup_epochs and val < 0.01:
                 break
             # if peak performance was more than 5 epochs ago, quit
             if epoch - max_epoch >= 5:
