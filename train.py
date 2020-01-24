@@ -71,7 +71,11 @@ def model_fn(features, labels, mode, params):
             post_warmup_lr = lr0 * np.power(1 - warmup_steps/decay_steps, lr_decay_rate)
 
         if warmup_steps > 0:
-            warmup_lr = tf.cast(post_warmup_lr * global_step / warmup_steps, tf.float32)
+            warmup_lr = (
+                            tf.cast(post_warmup_lr, lr.dtype) * 
+                            tf.cast(global_step, lr.dtype) / 
+                            tf.cast(warmup_steps, lr.dtype)
+                        )
             learning_rate = tf.cond(global_step < warmup_steps, lambda: warmup_lr, lambda: lr)
         else:
             learning_rate = lr
@@ -224,6 +228,6 @@ class Experiment:
             # if acc still not responding after 5 epochs, quit
             if epoch >= 5 and val < 0.01:
                 break
-            # if peak performance was more than 5 epochs ago, quit
-            if epoch - max_epoch >= 5:
+            # if peak performance was more than 10 epochs ago, quit
+            if epoch - max_epoch >= 10:
                 break

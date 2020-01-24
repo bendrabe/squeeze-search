@@ -10,6 +10,34 @@ NUM_EPOCHS = 68
 #LATE_LR_EPOCH = 4*NUM_EPOCHS//5
 LR_DECAY_SCHED = "poly"
 
+def trunc_norm(loc, scale, a, b):
+    r = np.random.normal(loc, scale)
+    while r < a or r > b:
+        r = np.random.normal(loc, scale)
+    return r
+
+BASE_LR = 0.04
+BASE_WD = 0.0002
+BASE_LRDP = 1.0
+
+lr_space_min = BASE_LR / 2
+lr_space_max = BASE_LR * 2
+log_lr = np.log(lr_space_min) + (np.log(lr_space_max) - np.log(lr_space_min))*trunc_norm(0.5, 0.25, 0, 1)
+lr = np.exp(log_lr)
+
+wd_space_min = BASE_WD / 2
+wd_space_max = BASE_WD * 2
+log_wd = np.log(wd_space_min) + (np.log(wd_space_max) - np.log(wd_space_min))*trunc_norm(0.5, 0.25, 0, 1)
+wd = np.exp(log_wd)
+
+lrdp_space_min = BASE_LRDP / 2
+lrdp_space_max = BASE_LRDP * 2
+log_lrdp = np.log(lrdp_space_min) + (np.log(lrdp_space_max) - np.log(lrdp_space_min))*trunc_norm(0.5, 0.25, 0, 1)
+lrdp = np.exp(log_lrdp)
+
+warmup_space = [0, 5]
+warmup = random.choice(warmup_space)
+
 '''
 lr0_mult = 6
 lr0_space_min = 0.04
@@ -48,6 +76,10 @@ steps_per_epoch = ((NUM_TRAIN_IMAGES - 1 ) // BATCH_SIZE) + 1
 b = (-1 / (LATE_LR_EPOCH*steps_per_epoch))*np.log( lrf / lr0 )
 '''
 
-exp = Experiment(model_dir=model_dir)
+exp = Experiment(model_dir=model_dir,
+                 lr0=lr,
+                 lr_decay_rate=lrdp,
+                 warmup_epochs=warmup,
+                 weight_decay=wd)
 exp.log_hyperparams()
 exp.execute()
