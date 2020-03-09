@@ -1,6 +1,6 @@
 #!/bin/bash
 
-for i in {0..100}
+for i in {0..20}
 do
     python main.py
 done
