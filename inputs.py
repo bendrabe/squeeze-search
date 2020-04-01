@@ -6,6 +6,10 @@ _NUM_TRAIN_IMAGES=1281167
 _SHUFFLE_BUFFER=10000
 _DEFAULT_IMAGE_SIZE = 227
 _NUM_CHANNELS = 3
+_R_MEAN = 123.68
+_G_MEAN = 116.78
+_B_MEAN = 103.94
+CHANNEL_MEANS = [_R_MEAN, _G_MEAN, _B_MEAN]
 
 def get_filenames(is_training, data_dir):
     """Return filenames for dataset."""
@@ -62,6 +66,10 @@ def preprocess_image(raw_image):
     )
 #    image = tf.image.convert_image_dtype(image, tf.float32)
     image = tf.cast(image, dtype=tf.float32)
+
+    means = tf.broadcast_to(CHANNEL_MEANS, tf.shape(image))
+    image = image - means
+
     image = tf.transpose(image, [2, 0, 1])
     return image
 
@@ -148,3 +156,39 @@ def get_synth_input_fn(shape, num_classes, dtype=tf.float32):
         return data
 
     return input_fn
+
+def get_label(file_path):
+    # convert the path to a list of path components
+    parts = tf.strings.split([file_path], os.path.sep)
+    # The second to last is the class-directory
+    label = tf.strings.to_number(parts.values[-2], out_type=tf.int32)
+    return label
+def decode_img(image):
+    # convert the compressed string to a 3D uint8 tensor
+    image = tf.image.decode_jpeg(image, channels=_NUM_CHANNELS)
+    # Use `convert_image_dtype` to convert to floats in the [0,1] range.
+    #img = tf.image.convert_image_dtype(image, tf.float32)
+    # resize the image to the desired size.
+    image = tf.image.resize(
+        image, [_DEFAULT_IMAGE_SIZE, _DEFAULT_IMAGE_SIZE]
+    )
+    image = tf.cast(image, dtype=tf.float32)
+
+    means = tf.broadcast_to(CHANNEL_MEANS, tf.shape(image))
+    image = image - means
+
+    image = tf.transpose(image, [2, 0, 1])
+    return image
+def process_path(file_path):
+    label = get_label(file_path)
+    # load the raw data from the file as a string
+    img = tf.io.read_file(file_path)
+    img = decode_img(img)
+    return img, label
+
+def get_imagenet2_inputfn(data_dir, batch_size):
+    dataset = tf.data.Dataset.list_files(os.path.join(data_dir, '*/*'))
+    dataset = dataset.map(process_path, num_parallel_calls=tf.contrib.data.AUTOTUNE)
+    dataset = dataset.batch(batch_size)
+    dataset = dataset.prefetch(buffer_size=tf.contrib.data.AUTOTUNE)
+    return dataset

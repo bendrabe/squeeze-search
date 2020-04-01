@@ -119,9 +119,11 @@ def model_fn(features, labels, mode, params):
 
 class Experiment:
     def __init__(self,
+                 test_only=False,
                  num_gpus=4,
                  num_epochs=68,
                  data_dir='/data/imagenet-tfrecord/',
+                 test_data_dir='/home/brabe2/imagenet-v2/imagenetv2-matched-frequency/',
                  model_dir='summary',
                  global_batch_size=512,
                  lr0=0.04,
@@ -129,9 +131,11 @@ class Experiment:
                  lr_decay_rate=1.0,
                  warmup_epochs=0,
                  weight_decay=0.0002):
+        self.test_only = test_only
         self.num_gpus = num_gpus
         self.num_epochs = num_epochs
         self.data_dir = data_dir
+        self.test_data_dir = test_data_dir
         self.model_dir = model_dir
         self.global_batch_size = global_batch_size
         self.lr0 = lr0
@@ -184,6 +188,12 @@ class Experiment:
                 batch_size=self.local_batch_size
             )
 
+        def test_input_fn():
+            return inputs.get_imagenet2_inputfn(
+                data_dir=self.test_data_dir,
+                batch_size=self.local_batch_size
+            )
+
         tf.logging.set_verbosity( tf.logging.INFO )
 
         session_config = tf.ConfigProto(allow_soft_placement=True)
@@ -215,19 +225,25 @@ class Experiment:
         #hooks = [tf_debug.LocalCLIDebugHook()]
         #hooks = [tf.train.ProfilerHook(save_steps=1000)]
 
-        max_val = 0.0
-        max_epoch = 0
+        if not self.test_only:
 
-        for epoch in range(self.num_epochs):
-            classifier.train(input_fn=train_input_fn, steps=self.steps_per_epoch, hooks=hooks)
-            eval_results = classifier.evaluate(input_fn=eval_input_fn)
-            val = eval_results['accuracy']
-            if val > max_val:
-                max_val = val
-                max_epoch = epoch
-            # if acc still not responding after 5 epochs, quit
-            if epoch >= 5 and val < 0.01:
-                break
-            # if peak performance was more than 10 epochs ago, quit
-            if epoch - max_epoch >= 10:
-                break
+            max_val = 0.0
+            max_epoch = 0
+
+            for epoch in range(self.num_epochs):
+                classifier.train(input_fn=train_input_fn, steps=self.steps_per_epoch, hooks=hooks)
+                eval_results = classifier.evaluate(input_fn=eval_input_fn)
+                val = eval_results['accuracy']
+                if val > max_val:
+                    max_val = val
+                    max_epoch = epoch
+                # if acc still not responding after 5 epochs, quit
+                if epoch >= 5 and val < 0.01:
+                    break
+                # if peak performance was more than 10 epochs ago, quit
+                if epoch - max_epoch >= 10:
+                    break
+
+        eval_results = classifier.evaluate(input_fn=eval_input_fn)
+        test_results = classifier.evaluate(input_fn=test_input_fn)
+        print("test accuracy: {}".format(test_results['accuracy']))

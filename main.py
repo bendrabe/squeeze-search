@@ -39,13 +39,12 @@ while os.path.exists(model_dir_base + str(trial)):
         print("All gridpts processed, exiting...")
         exit()
 '''
-model_dir = model_dir_base + str(trial) + '/'
-os.makedirs(model_dir)
+#model_dir = model_dir_base + str(trial) + '/'
+#os.makedirs(model_dir)
+model_dir = model_dir_base + str(0)
 
-exp = Experiment(model_dir=model_dir,
-                 lr0=lr0,
-                 lr_decay_rate=lrdp,
-                 warmup_epochs=wepochs,
-                 weight_decay=wd)
+exp = Experiment(test_only=True,
+                 model_dir=model_dir,
+                 data_dir='/home/brabe2/imagenet-tfrecord/')
 exp.log_hyperparams()
 exp.execute()
