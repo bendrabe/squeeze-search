@@ -16,6 +16,7 @@ MOMENTUM=0.9
 
 def model_fn(features, labels, mode, params):
     tf.summary.image("inputs", tf.transpose(features, [0,2,3,1]), max_outputs=6)
+    mixup = params['mixup']
     lr0 = params['lr0']
     lr_decay_sched = params['lr_decay_sched']
     lr_decay_rate = params['lr_decay_rate']
@@ -35,8 +36,8 @@ def model_fn(features, labels, mode, params):
     if mode == tf.estimator.ModeKeys.PREDICT:
         return tf.estimator.EstimatorSpec(mode=mode, predictions=predictions)
 
-    cross_entropy = tf.losses.sparse_softmax_cross_entropy(
-        logits=logits, labels=labels
+    cross_entropy = tf.losses.softmax_cross_entropy(
+        logits=logits, onehot_labels=labels
     )
     tf.identity(cross_entropy, name='cross_entropy')
     tf.summary.scalar('cross_entropy', cross_entropy)
@@ -92,10 +93,11 @@ def model_fn(features, labels, mode, params):
     else:
         train_op = None
 
-    accuracy = tf.metrics.accuracy(labels, predictions['classes'])
+    non_onehot_labels = tf.argmax(labels, axis=1)
+    accuracy = tf.metrics.accuracy(non_onehot_labels, predictions['classes'])
     accuracy_top_5 = tf.metrics.mean(
         tf.nn.in_top_k(
-            predictions=logits, targets=labels, k=5, name='top_5_op'
+            predictions=logits, targets=non_onehot_labels, k=5, name='top_5_op'
         )
     )
 
@@ -122,15 +124,18 @@ class Experiment:
                  test_only=False,
                  num_gpus=4,
                  num_epochs=68,
-                 data_dir='/data/imagenet-tfrecord/',
+                 data_dir='/home/brabe2/imagenet-tfrecord/',
                  test_data_dir='/home/brabe2/imagenet-v2/imagenetv2-matched-frequency/',
                  model_dir='summary',
                  global_batch_size=512,
+                 crop='squeeze',
+                 std=False,
+                 mixup=False,
                  lr0=0.04,
                  lr_decay_sched="poly",
                  lr_decay_rate=1.0,
-                 warmup_epochs=0,
-                 weight_decay=0.0002):
+                 weight_decay=0.0002,
+                 warmup_epochs=0):
         self.test_only = test_only
         self.num_gpus = num_gpus
         self.num_epochs = num_epochs
@@ -138,11 +143,14 @@ class Experiment:
         self.test_data_dir = test_data_dir
         self.model_dir = model_dir
         self.global_batch_size = global_batch_size
+        self.crop = crop
+        self.std = std
+        self.mixup = mixup
         self.lr0 = lr0
         self.lr_decay_sched = lr_decay_sched
         self.lr_decay_rate = lr_decay_rate
-        self.warmup_epochs = warmup_epochs
         self.weight_decay = weight_decay
+        self.warmup_epochs = warmup_epochs
 
         self.local_batch_size = global_batch_size // num_gpus
         self.steps_per_epoch = ((_NUM_TRAIN_IMAGES - 1 ) // global_batch_size) + 1
@@ -156,11 +164,14 @@ class Experiment:
 
         self.hyperparams = {
             'global_batch_size': self.global_batch_size,
+            'crop': self.crop,
+            'std': self.std,
+            'mixup': self.mixup,
             'lr0': self.lr0,
             'lr_decay_sched': self.lr_decay_sched,
             'lr_decay_rate': self.lr_decay_rate,
-            'warmup_epochs': self.warmup_epochs,
-            'weight_decay': self.weight_decay
+            'weight_decay': self.weight_decay,
+            'warmup_epochs': self.warmup_epochs
         }
 
     def log_hyperparams(self):
@@ -178,20 +189,19 @@ class Experiment:
             return input_fn(
                 is_training=True,
                 data_dir=self.data_dir,
-                batch_size=self.local_batch_size
+                batch_size=self.local_batch_size,
+                crop=self.crop,
+                std=self.std,
+                mixup=self.mixup
             )
 
         def eval_input_fn():
             return input_fn(
                 is_training=False,
                 data_dir=self.data_dir,
-                batch_size=self.local_batch_size
-            )
-
-        def test_input_fn():
-            return inputs.get_imagenet2_inputfn(
-                data_dir=self.test_data_dir,
-                batch_size=self.local_batch_size
+                batch_size=self.local_batch_size,
+                crop=self.crop,
+                std=self.std
             )
 
         tf.logging.set_verbosity( tf.logging.INFO )
@@ -208,6 +218,7 @@ class Experiment:
 
         classifier = tf.estimator.Estimator(model_fn=model_fn, model_dir=self.model_dir,
             config=config, params={
+                'mixup': self.mixup,
                 'lr0': self.lr0,
                 'lr_decay_sched': self.lr_decay_sched,
                 'lr_decay_rate': self.lr_decay_rate,
@@ -243,7 +254,13 @@ class Experiment:
                 # if peak performance was more than 10 epochs ago, quit
                 if epoch - max_epoch >= 10:
                     break
+            print("peak eval accuracy: {}".format(max_val))
 
-        eval_results = classifier.evaluate(input_fn=eval_input_fn)
+        def test_input_fn():
+            return inputs.get_imagenet2_inputfn(
+                data_dir=self.test_data_dir,
+                batch_size=self.local_batch_size,
+                std=self.std
+            )
         test_results = classifier.evaluate(input_fn=test_input_fn)
         print("test accuracy: {}".format(test_results['accuracy']))

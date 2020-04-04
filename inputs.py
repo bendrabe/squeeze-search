@@ -6,10 +6,16 @@ _NUM_TRAIN_IMAGES=1281167
 _SHUFFLE_BUFFER=10000
 _DEFAULT_IMAGE_SIZE = 227
 _NUM_CHANNELS = 3
+_NUM_CLASSES = 1000
+_RESIZE_MIN = 256
 _R_MEAN = 123.68
 _G_MEAN = 116.78
 _B_MEAN = 103.94
 CHANNEL_MEANS = [_R_MEAN, _G_MEAN, _B_MEAN]
+_R_STD = 58.39
+_G_STD = 57.12
+_B_STD = 57.38
+CHANNEL_STDS = [_R_STD, _G_STD, _B_STD]
 
 def get_filenames(is_training, data_dir):
     """Return filenames for dataset."""
@@ -59,26 +65,200 @@ def parse_serialized_example(serialized_example):
 
     return features['image/encoded'], label, bbox
 
-def preprocess_image(raw_image):
+def _central_crop(image, crop_height, crop_width):
+    """Performs central crops of the given image list.
+    Args:
+        image: a 3-D image tensor
+        crop_height: the height of the image following the crop.
+        crop_width: the width of the image following the crop.
+    Returns:
+        3-D tensor with cropped image.
+    """
+    shape = tf.shape(input=image)
+    height, width = shape[0], shape[1]
+
+    amount_to_be_cropped_h = (height - crop_height)
+    crop_top = amount_to_be_cropped_h // 2
+    amount_to_be_cropped_w = (width - crop_width)
+    crop_left = amount_to_be_cropped_w // 2
+    return tf.slice(
+        image, [crop_top, crop_left, 0], [crop_height, crop_width, -1])
+
+def _smallest_size_at_least(height, width, resize_min):
+    """Computes new shape with the smallest side equal to `smallest_side`.
+
+    Computes new shape with the smallest side equal to `smallest_side` while
+    preserving the original aspect ratio.
+
+    Args:
+        height: an int32 scalar tensor indicating the current height.
+        width: an int32 scalar tensor indicating the current width.
+        resize_min: A python integer or scalar `Tensor` indicating the size of
+            the smallest side after resize.
+
+    Returns:
+        new_height: an int32 scalar tensor indicating the new height.
+        new_width: an int32 scalar tensor indicating the new width.
+    """
+    resize_min = tf.cast(resize_min, tf.float32)
+
+    # Convert to floats to make subsequent calculations go smoothly.
+    height, width = tf.cast(height, tf.float32), tf.cast(width, tf.float32)
+
+    smaller_dim = tf.minimum(height, width)
+    scale_ratio = resize_min / smaller_dim
+
+    # Convert back to ints to make heights and widths that TF ops will accept.
+    new_height = tf.cast(height * scale_ratio, tf.int32)
+    new_width = tf.cast(width * scale_ratio, tf.int32)
+
+    return new_height, new_width
+
+def _aspect_preserving_resize(image, resize_min):
+    """Resize images preserving the original aspect ratio.
+    Args:
+        image: A 3-D image `Tensor`.
+        resize_min: A python integer or scalar `Tensor` indicating the size of
+            the smallest side after resize.
+    Returns:
+        resized_image: A 3-D tensor containing the resized image.
+    """
+    shape = tf.shape(input=image)
+    height, width = shape[0], shape[1]
+
+    new_height, new_width = _smallest_size_at_least(height, width, resize_min)
+
+    return _resize_image(image, new_height, new_width)
+
+def _resize_image(image, height, width):
+    """Simple wrapper around tf.resize_images.
+
+    This is primarily to make sure we use the same `ResizeMethod` and other
+    details each time.
+
+    Args:
+        image: A 3-D image `Tensor`.
+        height: The target height for the resized image.
+        width: The target width for the resized image.
+    Returns:
+        resized_image: A 3-D tensor containing the resized image. The first two
+            dimensions have the shape [height, width].
+    """
+    return tf.compat.v1.image.resize(
+        image, [height, width], method=tf.image.ResizeMethod.BILINEAR,
+        align_corners=False)
+
+def _central_crop(image, crop_height, crop_width):
+    """Performs central crops of the given image list.
+    Args:
+        image: a 3-D image tensor
+        crop_height: the height of the image following the crop.
+        crop_width: the width of the image following the crop.
+    Returns:
+        3-D tensor with cropped image.
+    """
+    shape = tf.shape(input=image)
+    height, width = shape[0], shape[1]
+
+    amount_to_be_cropped_h = (height - crop_height)
+    crop_top = amount_to_be_cropped_h // 2
+    amount_to_be_cropped_w = (width - crop_width)
+    crop_left = amount_to_be_cropped_w // 2
+    return tf.slice(
+        image, [crop_top, crop_left, 0], [crop_height, crop_width, -1])
+
+def _squeeze_crop(image):
+    image = _aspect_preserving_resize(image, _RESIZE_MIN)
+    image = tf.image.random_crop(image, [_DEFAULT_IMAGE_SIZE, _DEFAULT_IMAGE_SIZE, _NUM_CHANNELS])
+    return image
+
+def _resnet_crop(image):
+    bbox = tf.constant([0.0, 0.0, 1.0, 1.0], dtype=tf.float32, shape=[1, 1, 4])
+    shape = tf.shape(image)
+    sample_distorted_bounding_box = tf.image.sample_distorted_bounding_box(
+        shape,
+        bounding_boxes=bbox,
+        min_object_covered=0,
+        aspect_ratio_range=[0.75, 1.33],
+        area_range=[0.08, 1.0],
+        max_attempts=100,
+        use_image_if_no_bounding_boxes=True)
+    bbox_begin, bbox_size, _ = sample_distorted_bounding_box
+
+    # Reassemble the bounding box in the format the crop op requires.
+    offset_height, offset_width, _ = tf.unstack(bbox_begin)
+    target_height, target_width, _ = tf.unstack(bbox_size)
+
+    cropped = tf.image.crop_to_bounding_box(
+        image,
+        offset_height=offset_height,
+        offset_width=offset_width,
+        target_height=target_height,
+        target_width=target_width)
+
+    # Flip to add a little more random distortion in.
+    cropped = tf.image.random_flip_left_right(cropped)
+    return cropped
+
+def preprocess_image(raw_image, is_training, crop, std):
     image = tf.image.decode_jpeg(raw_image, channels=_NUM_CHANNELS)
-    image = tf.image.resize_images(
-        image, [_DEFAULT_IMAGE_SIZE, _DEFAULT_IMAGE_SIZE]
-    )
-#    image = tf.image.convert_image_dtype(image, tf.float32)
-    image = tf.cast(image, dtype=tf.float32)
+
+    if is_training:
+        if crop == "squeeze":
+            image = _squeeze_crop(image)
+        else:
+            image = _resnet_crop(image)
+            image = _resize_image(image, _DEFAULT_IMAGE_SIZE, _DEFAULT_IMAGE_SIZE)
+    else:
+        image = _aspect_preserving_resize(image, _RESIZE_MIN)
+        image = _central_crop(image, _DEFAULT_IMAGE_SIZE, _DEFAULT_IMAGE_SIZE)
 
     means = tf.broadcast_to(CHANNEL_MEANS, tf.shape(image))
     image = image - means
 
+    if std:
+        stds = tf.broadcast_to(CHANNEL_STDS, tf.shape(image))
+        image = image / stds
+
+    # convert from NHWC to NCHW and cast last
     image = tf.transpose(image, [2, 0, 1])
+    image = tf.cast(image, dtype=tf.float32)
     return image
 
-def parse_record(raw_record):
+def parse_record(raw_record, is_training, crop, std):
     raw_image, label, _ = parse_serialized_example(raw_record)
-    image = preprocess_image(raw_image)
+    image = preprocess_image(raw_image, is_training, crop, std)
+    label = tf.one_hot(label, depth=_NUM_CLASSES)
     return image, label
 
-def get_real_input_fn(is_training, data_dir, batch_size):
+def mix(batch_size, alpha, images, labels):
+    """Applies Mixup regularization to a batch of images and labels.
+    
+    [1] Hongyi Zhang, Moustapha Cisse, Yann N. Dauphin, David Lopez-Paz
+        Mixup: Beyond Empirical Risk Minimization.
+        ICLR'18, https://arxiv.org/abs/1710.09412
+    
+    Arguments:
+        batch_size: The input batch size for images and labels.
+        alpha: Float that controls the strength of Mixup regularization.
+        images: A batch of images of shape [batch_size, ...]
+        labels: A batch of labels of shape [batch_size, num_classes]
+    
+    Returns:
+        A tuple of (images, labels) with the same dimensions as the input with
+        Mixup regularization applied.
+    """
+    mix_weight = tf.distributions.Beta(alpha, alpha).sample([batch_size, 1])
+    mix_weight = tf.maximum(mix_weight, 1. - mix_weight)
+    images_mix_weight = tf.reshape(mix_weight, [batch_size, 1, 1, 1])
+    # Mixup on a single batch is implemented by taking a weighted sum with the
+    # same batch in reverse.
+    images_mix = (
+        images * images_mix_weight + images[::-1] * (1. - images_mix_weight))
+    labels_mix = labels * mix_weight + labels[::-1] * (1. - mix_weight)
+    return images_mix, labels_mix
+
+def get_real_input_fn(is_training, data_dir, batch_size, crop, std, mixup=False):
     filenames = get_filenames(is_training, data_dir)
     dataset = tf.data.Dataset.from_tensor_slices(filenames)
 
@@ -106,10 +286,16 @@ def get_real_input_fn(is_training, data_dir, batch_size):
     # Parses the raw records into images and labels.
     dataset = dataset.apply(
         tf.contrib.data.map_and_batch(
-            lambda value: parse_record(value),
+            lambda value: parse_record(value, is_training, crop, std),
             batch_size=batch_size,
             num_parallel_batches=1,
             drop_remainder=False))
+
+    if is_training and mixup:
+        dataset = dataset.map(
+            lambda images, labels: mix(batch_size, 0.2, images, labels),
+            num_parallel_calls=tf.contrib.data.AUTOTUNE
+        )
 
     # ops between final prefetch and get_next call to iterator are sync.
     # prefetch again to background preprocessing work.
@@ -163,32 +349,22 @@ def get_label(file_path):
     # The second to last is the class-directory
     label = tf.strings.to_number(parts.values[-2], out_type=tf.int32)
     return label
-def decode_img(image):
-    # convert the compressed string to a 3D uint8 tensor
-    image = tf.image.decode_jpeg(image, channels=_NUM_CHANNELS)
-    # Use `convert_image_dtype` to convert to floats in the [0,1] range.
-    #img = tf.image.convert_image_dtype(image, tf.float32)
-    # resize the image to the desired size.
-    image = tf.image.resize(
-        image, [_DEFAULT_IMAGE_SIZE, _DEFAULT_IMAGE_SIZE]
-    )
-    image = tf.cast(image, dtype=tf.float32)
 
-    means = tf.broadcast_to(CHANNEL_MEANS, tf.shape(image))
-    image = image - means
-
-    image = tf.transpose(image, [2, 0, 1])
-    return image
-def process_path(file_path):
+def process_path(file_path, std):
     label = get_label(file_path)
     # load the raw data from the file as a string
     img = tf.io.read_file(file_path)
-    img = decode_img(img)
+    img = preprocess_image(img, is_training=False, crop="squeeze", std=std)
+    label = tf.one_hot(label, depth=_NUM_CLASSES)
     return img, label
 
-def get_imagenet2_inputfn(data_dir, batch_size):
+def get_imagenet2_inputfn(data_dir, batch_size, std):
     dataset = tf.data.Dataset.list_files(os.path.join(data_dir, '*/*'))
-    dataset = dataset.map(process_path, num_parallel_calls=tf.contrib.data.AUTOTUNE)
-    dataset = dataset.batch(batch_size)
+    dataset = dataset.apply(
+        tf.contrib.data.map_and_batch(
+            lambda file_path: process_path(file_path, std),
+            batch_size=batch_size,
+            num_parallel_batches=1,
+            drop_remainder=False))
     dataset = dataset.prefetch(buffer_size=tf.contrib.data.AUTOTUNE)
     return dataset
