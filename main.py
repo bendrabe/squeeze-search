@@ -40,7 +40,7 @@ crop, std, mixup, lr0, lrdp, wd, wepochs = combined_space[trial]
 if mixup:
     num_epochs = 90
 else:
-	num_epochs = 68
+    num_epochs = 68
 
 exp = Experiment(num_epochs=num_epochs,
                  model_dir=model_dir,
