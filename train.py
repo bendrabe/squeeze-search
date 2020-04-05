@@ -273,18 +273,15 @@ class Experiment:
 
             for epoch in range(self.num_epochs):
                 classifier.train(input_fn=train_input_fn, steps=self.steps_per_epoch, hooks=hooks)
-                eval_results = classifier.evaluate(input_fn=eval_input_fn)
+                eval_results = classifier.evaluate(input_fn=eval_input_fn, name='val')
                 val = eval_results['accuracy']
                 if val > max_val:
                     max_val = val
                     max_epoch = epoch
-                # if acc still not responding after 5 epochs, quit
-                if epoch >= 5 and val < 0.01:
-                    break
                 # if peak performance was more than 10 epochs ago, quit
                 if epoch - max_epoch >= 10:
                     break
-            print("peak eval accuracy: {}".format(max_val))
+            print("peak val accuracy: {}".format(max_val))
 
         def test_input_fn():
             return inputs.get_imagenet2_inputfn(
@@ -292,13 +289,13 @@ class Experiment:
                 batch_size=self.local_batch_size,
                 std=self.std
             )
-        test_results = classifier.evaluate(input_fn=test_input_fn)
+        test_results = classifier.evaluate(input_fn=test_input_fn, name='test')
         print("test accuracy: {}".format(test_results['accuracy']))
 
         if not self.test_only:
             val_test = {
-                'val': max_val,
-                'test': test_results['accuracy']
+                'val': float(max_val),
+                'test': float(test_results['accuracy'])
             }
 
             with open(self.model_dir + 'val_test.txt', 'w') as f:
