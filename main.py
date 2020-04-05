@@ -7,7 +7,7 @@ from train import Experiment
 crop_space = ["squeeze", "resnet"]
 std_space = [False, True]
 mixup_space = [False, True]
-lr0_space = [0.03, 0.04, 0.06]
+lr0_space = [0.04, 0.07]
 lrdp_space = [0.75, 1.0]
 wd_space = [0.0002, 0.0004]
 wepochs_space = [0, 4]
@@ -37,8 +37,14 @@ os.makedirs(model_dir)
 
 crop, std, mixup, lr0, lrdp, wd, wepochs = combined_space[trial]
 
-'''
-exp = Experiment(model_dir=model_dir,
+if mixup:
+    num_epochs = 90
+else:
+	num_epochs = 68
+
+exp = Experiment(num_epochs=num_epochs,
+                 model_dir=model_dir,
+                 data_dir='/data/imagenet-tfrecord/',
                  crop=crop,
                  std=std,
                  mixup=mixup,
@@ -46,7 +52,5 @@ exp = Experiment(model_dir=model_dir,
                  lr_decay_rate=lrdp,
                  weight_decay=wd,
                  warmup_epochs=wepochs)
-'''
-exp = Experiment(model_dir=model_dir, crop="squeeze", mixup=True)
 exp.log_hyperparams()
 exp.execute()

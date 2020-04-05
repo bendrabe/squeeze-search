@@ -14,9 +14,37 @@ _NUM_CLASSES = 1000
 DATA_FORMAT='channels_first'
 MOMENTUM=0.9
 
+def mix(batch_size, alpha, images, labels):
+    """Applies Mixup regularization to a batch of images and labels.
+    
+    [1] Hongyi Zhang, Moustapha Cisse, Yann N. Dauphin, David Lopez-Paz
+        Mixup: Beyond Empirical Risk Minimization.
+        ICLR'18, https://arxiv.org/abs/1710.09412
+    
+    Arguments:
+        batch_size: The input batch size for images and labels.
+        alpha: Float that controls the strength of Mixup regularization.
+        images: A batch of images of shape [batch_size, ...]
+        labels: A batch of labels of shape [batch_size, num_classes]
+    
+    Returns:
+        A tuple of (images, labels) with the same dimensions as the input with
+        Mixup regularization applied.
+    """
+    mix_weight = tf.distributions.Beta(alpha, alpha).sample([batch_size, 1])
+    mix_weight = tf.maximum(mix_weight, 1. - mix_weight)
+    images_mix_weight = tf.reshape(mix_weight, [batch_size, 1, 1, 1])
+    # Mixup on a single batch is implemented by taking a weighted sum with the
+    # same batch in reverse.
+    images_mix = (
+        images * images_mix_weight + images[::-1] * (1. - images_mix_weight))
+    labels_mix = labels * mix_weight + labels[::-1] * (1. - mix_weight)
+    return images_mix, labels_mix
+
 def model_fn(features, labels, mode, params):
     tf.summary.image("inputs", tf.transpose(features, [0,2,3,1]), max_outputs=6)
     mixup = params['mixup']
+    local_batch_size = params['local_batch_size']
     lr0 = params['lr0']
     lr_decay_sched = params['lr_decay_sched']
     lr_decay_rate = params['lr_decay_rate']
@@ -25,6 +53,9 @@ def model_fn(features, labels, mode, params):
     weight_decay = params['weight_decay']
     data_format = params['data_format']
     is_training = mode == tf.estimator.ModeKeys.TRAIN
+
+    if is_training and mixup:
+        features, labels = mix(local_batch_size, 0.2, features, labels)
 
     logits = squeezenet.model(features, is_training, data_format, _NUM_CLASSES)
 
@@ -191,8 +222,7 @@ class Experiment:
                 data_dir=self.data_dir,
                 batch_size=self.local_batch_size,
                 crop=self.crop,
-                std=self.std,
-                mixup=self.mixup
+                std=self.std
             )
 
         def eval_input_fn():
@@ -219,6 +249,7 @@ class Experiment:
         classifier = tf.estimator.Estimator(model_fn=model_fn, model_dir=self.model_dir,
             config=config, params={
                 'mixup': self.mixup,
+                'local_batch_size': self.local_batch_size,
                 'lr0': self.lr0,
                 'lr_decay_sched': self.lr_decay_sched,
                 'lr_decay_rate': self.lr_decay_rate,
@@ -236,9 +267,8 @@ class Experiment:
         #hooks = [tf_debug.LocalCLIDebugHook()]
         #hooks = [tf.train.ProfilerHook(save_steps=1000)]
 
+        max_val = 0.0
         if not self.test_only:
-
-            max_val = 0.0
             max_epoch = 0
 
             for epoch in range(self.num_epochs):
@@ -264,3 +294,12 @@ class Experiment:
             )
         test_results = classifier.evaluate(input_fn=test_input_fn)
         print("test accuracy: {}".format(test_results['accuracy']))
+
+        if not self.test_only:
+            val_test = {
+                'val': max_val,
+                'test': test_results['accuracy']
+            }
+
+            with open(self.model_dir + 'val_test.txt', 'w') as f:
+                json.dump(val_test, f)
