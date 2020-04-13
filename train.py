@@ -31,6 +31,7 @@ def mix(batch_size, alpha, images, labels):
         A tuple of (images, labels) with the same dimensions as the input with
         Mixup regularization applied.
     """
+    alpha = tf.cast(alpha, images.dtype)
     mix_weight = tf.distributions.Beta(alpha, alpha).sample([batch_size, 1])
     mix_weight = tf.maximum(mix_weight, 1. - mix_weight)
     images_mix_weight = tf.reshape(mix_weight, [batch_size, 1, 1, 1])
@@ -54,8 +55,8 @@ def model_fn(features, labels, mode, params):
     data_format = params['data_format']
     is_training = mode == tf.estimator.ModeKeys.TRAIN
 
-    if is_training and mixup:
-        features, labels = mix(local_batch_size, 0.2, features, labels)
+    if is_training and mixup is not None:
+        features, labels = mix(local_batch_size, mixup, features, labels)
 
     logits = squeezenet.model(features, is_training, data_format, _NUM_CLASSES)
 
@@ -161,7 +162,7 @@ class Experiment:
                  global_batch_size=512,
                  crop='squeeze',
                  std=False,
-                 mixup=False,
+                 mixup=None,
                  lr0=0.04,
                  lr_decay_sched="poly",
                  lr_decay_rate=1.0,
