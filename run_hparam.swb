@@ -9,5 +9,5 @@
 
 source ~/.bashrc
 conda activate powerai-v1.6.0-py3.6
-cd ~/ddl_training/hparam_search
+cd ~/squeeze-search
 python main.py
