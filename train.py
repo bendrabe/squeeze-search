@@ -43,7 +43,6 @@ def mix(batch_size, alpha, images, labels):
     return images_mix, labels_mix
 
 def model_fn(features, labels, mode, params):
-    tf.summary.image("inputs", tf.transpose(features, [0,2,3,1]), max_outputs=6)
     mixup = params['mixup']
     local_batch_size = params['local_batch_size']
     lr0 = params['lr0']
@@ -55,8 +54,10 @@ def model_fn(features, labels, mode, params):
     data_format = params['data_format']
     is_training = mode == tf.estimator.ModeKeys.TRAIN
 
+    tf.summary.image("premix", tf.transpose(features, [0,2,3,1]), max_outputs=8)
     if is_training and mixup is not None:
         features, labels = mix(local_batch_size, mixup, features, labels)
+        tf.summary.image("postmix", tf.transpose(features, [0,2,3,1]), max_outputs=8)
 
     logits = squeezenet.model(features, is_training, data_format, _NUM_CLASSES)
 

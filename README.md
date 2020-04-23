@@ -1,2 +1,2 @@
 # squeeze-search
-An attempt at improving accuracy of SqueezeNet 1.0 using a guided random search.
+An examination of the effect of grid and random searches on performance and generalization.
